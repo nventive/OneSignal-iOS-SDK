@@ -47,7 +47,6 @@ typedef struct os_last_location {
 + (void) sendLocation;
 + (os_last_location*)lastLocation;
 + (void)clearLastLocation;
-+ (void)onfocus:(BOOL)isActive;
 
 @end
 
