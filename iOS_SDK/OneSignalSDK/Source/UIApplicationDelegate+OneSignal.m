@@ -255,6 +255,9 @@ static NSArray* delegateSubclasses = nil;
 - (void) oneSignalApplicationDidEnterBackground:(UIApplication*)application {
     [OneSignal onesignal_Log:ONE_S_LL_VERBOSE message:@"oneSignalApplicationDidEnterBackground"];
     
+    if ([OneSignal app_id])
+        [OneSignalLocation onFocus:NO];
+        
     if ([self respondsToSelector:@selector(oneSignalApplicationDidEnterBackground:)])
         [self oneSignalApplicationDidEnterBackground:application];
 }
@@ -264,6 +267,7 @@ static NSArray* delegateSubclasses = nil;
     
     if ([OneSignal app_id]) {
         [OneSignalTracker onFocus:NO];
+        [OneSignalLocation onFocus:YES];
     }
     
     if ([self respondsToSelector:@selector(oneSignalApplicationDidBecomeActive:)])
