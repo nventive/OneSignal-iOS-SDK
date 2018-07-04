@@ -208,6 +208,23 @@ static OneSignalLocation* singleInstance = nil;
     [OneSignal onesignal_Log:ONE_S_LL_ERROR message:[NSString stringWithFormat:@"CLLocationManager did fail with error: %@", error]];
 }
 
++ (void)onFocus:(BOOL)isActive {
+    if ([OneSignal requiresUserPrivacyConsent])
+        return;
+    
+    if (!locationManager)
+        return;
+    
+    if (isActive)
+    {
+        NSLog(@"OneSignal - Enable fine location tracking");
+        [locationManager performSelector:@selector(startUpdatingLocation)];
+    } else {
+        NSLog(@"OneSignal - Disable fine location tracking");
+        [locationManager performSelector:@selector(stopUpdatingLocation)];
+    }
+}
+
 + (void)sendLocation {
     
     // return if the user has not granted privacy permissions
