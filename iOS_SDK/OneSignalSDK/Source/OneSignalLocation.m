@@ -243,10 +243,10 @@ static OneSignalLocation* singleInstance = nil;
         
         requests[@"push"] = [OSRequestSendLocation withUserId:[OneSignal mUserId] appId:[OneSignal app_id] location:lastLocation networkType:[OneSignalHelper getNetType] backgroundState:([UIApplication sharedApplication].applicationState != UIApplicationStateActive) emailAuthHashToken:nil];
         
-        [OneSignalClient.sharedClient executeSimultaneousRequests:requests withSuccess:nil onFailure:nil];
+        NSDictionary* nowSendingTags = @{@"lat":[NSNumber numberWithDouble:lastLocation->cords.latitude], @"long":[NSNumber numberWithDouble:lastLocation->cords.longitude]};
+        requests[@"tags"] = [OSRequestSendTagsToServer withUserId:[OneSignal mUserId] appId:[OneSignal app_id] tags:nowSendingTags networkType:[OneSignalHelper getNetType] withEmailAuthHashToken:nil];
         
-        NSDictionary *dict = @{@"lat":[NSNumber numberWithDouble:lastLocation->cords.latitude], @"long":[NSNumber numberWithDouble:lastLocation->cords.longitude]};
-        [OneSignal sendTags:dict];
+        [OneSignalClient.sharedClient executeSimultaneousRequests:requests withSuccess:nil onFailure:nil];
     }
 }
 
