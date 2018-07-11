@@ -42,6 +42,10 @@ void onesignal_Log(ONE_S_LOG_LEVEL logLevel, NSString* message);
 
 @implementation OneSignalLocation
 
+//Track time until next location fire event
+const NSTimeInterval foregroundSendLocationWaitTime = 2 * 60.0; // Every 2 minutes in foreground mode
+const NSTimeInterval backgroundSendLocationWaitTime = 5 * 60.0; // Every 5 minutes in background mode
+NSTimer* sendLocationTimer = nil;
 os_last_location *lastLocation;
 bool initialLocationSent = false;
 UIBackgroundTaskIdentifier fcTask;
@@ -49,6 +53,7 @@ UIBackgroundTaskIdentifier fcTask;
 static id locationManager = nil;
 static id significantLocationManager = nil;
 static bool started = false;
+static bool locationSent = false;
 static bool hasDelayed = false;
 
 // CoreLocation must be statically linked for geotagging to work on iOS 6 and possibly 7.
@@ -104,6 +109,47 @@ static OneSignalLocation* singleInstance = nil;
     //Listen to app going to and from background
 }
 
++ (void)onFocus:(BOOL)isActive {
+    
+    // return if the user has not granted privacy permissions
+    if ([OneSignal requiresUserPrivacyConsent])
+        return;
+    
+    if(!locationManager || !started) return;
+    
+    /**
+     We have a state switch
+     - If going to active: keep timer going
+     - If going to background:
+     1. Make sure that we can track background location
+     -> continue timer to send location otherwise set location to nil
+     Otherwise set timer to NULL
+     **/
+    
+    NSTimeInterval remainingTimerTime = sendLocationTimer.fireDate.timeIntervalSinceNow;
+    NSTimeInterval requiredWaitTime = isActive ? foregroundSendLocationWaitTime : backgroundSendLocationWaitTime ;
+    NSTimeInterval adjustedTime = remainingTimerTime > 0 ? remainingTimerTime : requiredWaitTime;
+    
+    if(isActive) {
+        if(sendLocationTimer)
+            //Keep timer going with the remaining time
+            [sendLocationTimer invalidate];
+            
+        sendLocationTimer = [NSTimer scheduledTimerWithTimeInterval:adjustedTime target:self selector:@selector(getNewLocation) userInfo:nil repeats:YES];
+    }
+    else {
+        
+        //Check if always granted
+        if( (int)[NSClassFromString(@"CLLocationManager") performSelector:@selector(authorizationStatus)] == 3) {
+            [OneSignalLocation beginTask];
+            [sendLocationTimer invalidate];
+            sendLocationTimer = [NSTimer scheduledTimerWithTimeInterval:adjustedTime target:self selector:@selector(getNewLocation) userInfo:nil repeats:YES];
+            [[NSRunLoop mainRunLoop] addTimer:sendLocationTimer forMode:NSRunLoopCommonModes];
+        }
+        else sendLocationTimer = NULL;
+    }
+}
+
 + (void) beginTask {
     fcTask = [[UIApplication sharedApplication] beginBackgroundTaskWithExpirationHandler:^{
         [OneSignalLocation endTask];
@@ -114,6 +160,8 @@ static OneSignalLocation* singleInstance = nil;
     [[UIApplication sharedApplication] endBackgroundTask: fcTask];
     fcTask = UIBackgroundTaskInvalid;
 }
+
+
 
 + (void) internalGetLocation:(bool)prompt {
     if (started)
@@ -167,8 +215,10 @@ static OneSignalLocation* singleInstance = nil;
     
     // Enable significant location changes monitoring to relaunch the app if swipped up when receiving a new location
     [significantLocationManager performSelector:@selector(startMonitoringSignificantLocationChanges)];
-    
+
     started = true;
+    
+    [self onFocus:YES];
 }
 
 #pragma mark CLLocationManagerDelegate
@@ -178,6 +228,9 @@ static OneSignalLocation* singleInstance = nil;
     // return if the user has not granted privacy permissions
     if ([OneSignal requiresUserPrivacyConsent])
         return;
+    
+    if (manager == locationManager)
+        [manager performSelector:@selector(stopUpdatingLocation)];
     
     id location = locations.lastObject;
     
@@ -190,8 +243,6 @@ static OneSignalLocation* singleInstance = nil;
     [invocation invoke];
     [invocation getReturnValue:&cords];
     
-    NSLog(@"OneSignal - New location: %f, %f", cords.latitude, cords.longitude);
-    
     @synchronized(OneSignalLocation.mutexObjectForLastLocation) {
         if (!lastLocation)
             lastLocation = (os_last_location*)malloc(sizeof(os_last_location));
@@ -201,28 +252,25 @@ static OneSignalLocation* singleInstance = nil;
         lastLocation->cords = cords;
     }
     
-    [OneSignalLocation sendLocation];
+    if (manager == locationManager) {
+        if (!locationSent) {
+            locationSent = true;
+            [OneSignalLocation sendLocation];
+            NSLog(@"OneSignal - New location (locationManager): %f, %f", cords.latitude, cords.longitude);
+        }
+    } else {
+        [OneSignalLocation sendLocation];
+        NSLog(@"OneSignal - New location (significantLocationManager): %f, %f", cords.latitude, cords.longitude);
+    }
 }
 
 -(void)locationManager:(id)manager didFailWithError:(NSError *)error {
     [OneSignal onesignal_Log:ONE_S_LL_ERROR message:[NSString stringWithFormat:@"CLLocationManager did fail with error: %@", error]];
 }
 
-+ (void)onFocus:(BOOL)isActive {
-    if ([OneSignal requiresUserPrivacyConsent])
-        return;
-    
-    if (!locationManager)
-        return;
-    
-    if (isActive)
-    {
-        NSLog(@"OneSignal - Enable fine location tracking");
-        [locationManager performSelector:@selector(startUpdatingLocation)];
-    } else {
-        NSLog(@"OneSignal - Disable fine location tracking");
-        [locationManager performSelector:@selector(stopUpdatingLocation)];
-    }
++ (void)getNewLocation {
+    locationSent = false;
+    [locationManager performSelector:@selector(startUpdatingLocation)];
 }
 
 + (void)sendLocation {
@@ -233,21 +281,20 @@ static OneSignalLocation* singleInstance = nil;
     
     @synchronized(OneSignalLocation.mutexObjectForLastLocation) {
         if (!lastLocation || ![OneSignal mUserId]) return;
-        
-        initialLocationSent = YES;
-        
+
         NSMutableDictionary *requests = [NSMutableDictionary new];
         
         if ([OneSignal mEmailUserId])
             requests[@"email"] = [OSRequestSendLocation withUserId:[OneSignal mEmailUserId] appId:[OneSignal app_id] location:lastLocation networkType:[OneSignalHelper getNetType] backgroundState:([UIApplication sharedApplication].applicationState != UIApplicationStateActive) emailAuthHashToken:[OneSignal mEmailAuthToken]];
         
         requests[@"push"] = [OSRequestSendLocation withUserId:[OneSignal mUserId] appId:[OneSignal app_id] location:lastLocation networkType:[OneSignalHelper getNetType] backgroundState:([UIApplication sharedApplication].applicationState != UIApplicationStateActive) emailAuthHashToken:nil];
-
+        
         NSDictionary* nowSendingTags = @{@"lat":[NSNumber numberWithDouble:lastLocation->cords.latitude], @"long":[NSNumber numberWithDouble:lastLocation->cords.longitude]};
         requests[@"tags"] = [OSRequestSendTagsToServer withUserId:[OneSignal mUserId] appId:[OneSignal app_id] tags:nowSendingTags networkType:[OneSignalHelper getNetType] withEmailAuthHashToken:nil];
         
         [OneSignalClient.sharedClient executeSimultaneousRequests:requests withSuccess:nil onFailure:nil];
     }
+    
 }
 
 
