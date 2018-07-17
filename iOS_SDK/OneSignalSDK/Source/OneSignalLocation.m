@@ -134,8 +134,8 @@ static OneSignalLocation* singleInstance = nil;
         if(sendLocationTimer)
             //Keep timer going with the remaining time
             [sendLocationTimer invalidate];
-            
-        sendLocationTimer = [NSTimer scheduledTimerWithTimeInterval:adjustedTime target:self selector:@selector(getNewLocation) userInfo:nil repeats:YES];
+        
+        sendLocationTimer = [NSTimer scheduledTimerWithTimeInterval:adjustedTime target:self selector:@selector(getNewLocation) userInfo:nil repeats:NO];
     }
     else {
         
@@ -143,7 +143,7 @@ static OneSignalLocation* singleInstance = nil;
         if( (int)[NSClassFromString(@"CLLocationManager") performSelector:@selector(authorizationStatus)] == 3) {
             [OneSignalLocation beginTask];
             [sendLocationTimer invalidate];
-            sendLocationTimer = [NSTimer scheduledTimerWithTimeInterval:adjustedTime target:self selector:@selector(getNewLocation) userInfo:nil repeats:YES];
+            sendLocationTimer = [NSTimer scheduledTimerWithTimeInterval:adjustedTime target:self selector:@selector(getNewLocation) userInfo:nil repeats:NO];
             [[NSRunLoop mainRunLoop] addTimer:sendLocationTimer forMode:NSRunLoopCommonModes];
         }
         else sendLocationTimer = NULL;
@@ -215,10 +215,15 @@ static OneSignalLocation* singleInstance = nil;
     
     // Enable significant location changes monitoring to relaunch the app if swipped up when receiving a new location
     [significantLocationManager performSelector:@selector(startMonitoringSignificantLocationChanges)];
-
+    
     started = true;
     
     [self onFocus:YES];
+}
+
++ (void)resetSendTimer {
+    NSTimeInterval requiredWaitTime = [UIApplication sharedApplication].applicationState == UIApplicationStateActive ? foregroundSendLocationWaitTime : backgroundSendLocationWaitTime ;
+    sendLocationTimer = [NSTimer scheduledTimerWithTimeInterval:requiredWaitTime target:self selector:@selector(sendLocation) userInfo:nil repeats:NO];
 }
 
 #pragma mark CLLocationManagerDelegate
@@ -229,8 +234,10 @@ static OneSignalLocation* singleInstance = nil;
     if ([OneSignal requiresUserPrivacyConsent])
         return;
     
-    if (manager == locationManager)
+    if (manager == locationManager) {
         [manager performSelector:@selector(stopUpdatingLocation)];
+        [OneSignalLocation resetSendTimer];
+    }
     
     id location = locations.lastObject;
     
@@ -281,7 +288,7 @@ static OneSignalLocation* singleInstance = nil;
     
     @synchronized(OneSignalLocation.mutexObjectForLastLocation) {
         if (!lastLocation || ![OneSignal mUserId]) return;
-
+        
         NSMutableDictionary *requests = [NSMutableDictionary new];
         
         if ([OneSignal mEmailUserId])
