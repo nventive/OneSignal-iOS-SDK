@@ -228,6 +228,15 @@ static OneSignalLocation* singleInstance = nil;
 
 #pragma mark CLLocationManagerDelegate
 
+- (void)locationManager:(id)manager didChangeAuthorizationStatus:(NSInteger)status {
+    if (status == 2)
+    {
+        NSLog(@"OneSignal - LocationManager permission has changed, clear location tags");
+        NSArray* keys = @[@"lat", @"long"];
+        [OneSignal deleteTags:keys];
+    }
+}
+
 - (void)locationManager:(id)manager didUpdateLocations:(NSArray *)locations {
     
     // return if the user has not granted privacy permissions
